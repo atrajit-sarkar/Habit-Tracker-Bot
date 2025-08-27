@@ -5,6 +5,8 @@ import tempfile
 import os
 import threading
 import time
+import requests
+import urllib3
 from db import StreakDB
 from utils import format_progress_message, generate_progress_html, generate_dashboard_html
 
@@ -888,8 +890,32 @@ if __name__ == "__main__":
     # Start the scheduled task checker
     start_scheduler()
     
-    try:
-        bot.infinity_polling(timeout=10, long_polling_timeout=5)
-    except Exception as e:
-        print(f"❌ Bot error: {e}")
-        print("🔄 Restarting...")
+    # Robust polling loop to avoid crashes on transient network errors
+    backoff = 2  # seconds, exponential up to 60s
+    while True:
+        try:
+            print("🚀 Starting Telegram polling loop...")
+            # Use longer timeouts so HTTP read timeout exceeds Telegram long-poll wait
+            bot.infinity_polling(timeout=50, long_polling_timeout=55)
+            # If infinity_polling returns (rare), restart after a short pause
+            print("ℹ️ Polling stopped gracefully. Restarting in 3s...")
+            time.sleep(3)
+            backoff = 2
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError, urllib3.exceptions.ReadTimeoutError) as e:
+            print(f"⚠️ Network timeout/connection issue: {e}. Retrying in {backoff}s...")
+            try:
+                bot.stop_polling()
+            except Exception:
+                pass
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+            continue
+        except Exception as e:
+            print(f"❌ Bot error: {e}. Retrying in {backoff}s...")
+            try:
+                bot.stop_polling()
+            except Exception:
+                pass
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+            continue
