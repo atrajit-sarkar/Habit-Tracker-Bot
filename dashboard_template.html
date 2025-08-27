@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Habit Tracker Dashboard</title>
+    <style>
+        :root {
+            --bg1: #0b1020; --bg2: #131a2b;
+            --primary: #7c3aed; --primary-2: #06b6d4; --accent: #22c55e;
+            --text: #e5e7eb; --muted: #94a3b8;
+            --glass: rgba(255,255,255,0.06); --glass-strong: rgba(255,255,255,0.1);
+            --border: rgba(255,255,255,0.12); --shadow: 0 18px 50px rgba(0,0,0,.45);
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; color: var(--text);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+            background: radial-gradient(1200px 700px at -10% -10%, rgba(124,58,237,.18), transparent 70%),
+                                    radial-gradient(1000px 700px at 110% 10%, rgba(6,182,212,.18), transparent 60%),
+                                    linear-gradient(180deg, var(--bg1), var(--bg2));
+            min-height: 100vh; padding: 36px 22px; overflow-x: hidden;
+        }
+
+        /* Aurora orbs */
+        .aurora { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+        .orb { position: absolute; width: 520px; height: 520px; filter: blur(60px); opacity: .18; border-radius: 50%; mix-blend-mode: screen; }
+        .o1 { background: #7c3aed; top: -120px; left: -120px; animation: float 18s ease-in-out infinite; }
+        .o2 { background: #06b6d4; top: 20%; right: -160px; animation: float 22s ease-in-out infinite reverse; }
+        .o3 { background: #22c55e; bottom: -160px; left: 20%; animation: float 26s ease-in-out infinite; }
+        @keyframes float { 0%,100%{ transform: translate(0,0) scale(1);} 50%{ transform: translate(20px,-20px) scale(1.05);} }
+
+        .container { max-width: 1220px; margin: 0 auto; position: relative; z-index: 1; }
+        .header { text-align: center; margin-bottom: 22px; }
+        .header h1 { margin: 0 0 8px; font-size: clamp(2rem, 4vw, 3rem); font-weight: 900; letter-spacing: -0.03em; background: linear-gradient(90deg, #fff, #d8b4fe 40%, #7dd3fc 80%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+        .header p { margin: 0; color: var(--muted); font-weight: 500; }
+
+        .tabs { position: sticky; top: 0; padding-bottom: 10px; background: linear-gradient(180deg, rgba(11,16,32,.9), rgba(11,16,32,.65) 70%, transparent); backdrop-filter: blur(6px); z-index: 5; }
+        .nav-tabs { display: inline-flex; gap: 10px; padding: 8px; background: var(--glass); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); }
+        .nav-tab { position: relative; background: transparent; border: 0; color: var(--text); padding: 12px 18px; border-radius: 12px; cursor: pointer; font-weight: 800; letter-spacing: .3px; transition: transform .15s ease, background-color .2s ease, color .2s ease; }
+        .nav-tab:hover { transform: translateY(-1px); background: rgba(255,255,255,.06); }
+        .nav-tab.active { background: linear-gradient(180deg, rgba(124,58,237,.25), rgba(6,182,212,.18)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.15); }
+
+        .panel { display: none; background: var(--glass); border: 1px solid var(--border); border-radius: 22px; box-shadow: var(--shadow); padding: clamp(22px, 3.4vw, 36px); margin-top: 18px; animation: fadeIn .35s ease; }
+        .panel.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px);} to { opacity: 1; transform: translateY(0);} }
+
+        .overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }
+        .stat-card { position: relative; padding: 22px; border-radius: 16px; background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03)); border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden; }
+        .stat-card:before { content: ""; position: absolute; inset: -1px; border-radius: inherit; background: conic-gradient(from 180deg at 50% 50%, rgba(124,58,237,.25), rgba(6,182,212,.2), rgba(124,58,237,.25)); filter: blur(40px); opacity: .22; pointer-events: none; }
+        .stat-number { font-size: 2.4rem; font-weight: 900; letter-spacing: -0.02em; }
+        .stat-label { color: var(--muted); text-transform: uppercase; letter-spacing: .1em; font-size: .85rem; }
+
+        .motivational { margin-top: 18px; padding: 16px 18px; border-radius: 14px; background: linear-gradient(90deg, rgba(34,197,94,.18), rgba(124,58,237,.18)); border: 1px solid var(--border); box-shadow: var(--shadow); }
+
+        .tasks-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 20px; }
+        .task-card { padding: 18px; border-radius: 16px; border: 1px solid transparent; background: linear-gradient(180deg, rgba(16,24,40,.7), rgba(16,24,40,.55)) padding-box, linear-gradient(90deg, rgba(124,58,237,.5), rgba(6,182,212,.5)) border-box; box-shadow: var(--shadow); transition: transform .18s ease, box-shadow .18s ease; }
+        .task-card:hover { transform: translateY(-3px); box-shadow: 0 18px 40px rgba(0,0,0,.5); }
+        .task-card.completed { background: linear-gradient(180deg, rgba(16,185,129,.22), rgba(16,185,129,.12)) padding-box, linear-gradient(90deg, rgba(34,197,94,.5), rgba(6,182,212,.4)) border-box; }
+        .task-name { font-weight: 900; font-size: 1.15rem; letter-spacing: -0.01em; }
+        .task-description { color: var(--muted); margin: 8px 0 12px; font-size: .95rem; }
+        .progress-bar { height: 10px; background: rgba(255,255,255,.08); border-radius: 999px; overflow: hidden; margin: 12px 0; position: relative; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, var(--primary), var(--primary-2)); transition: width .7s ease; position: relative; }
+        .progress-fill:after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(60deg, rgba(255,255,255,.15) 0 8px, transparent 8px 16px); mix-blend-mode: overlay; opacity: .35; animation: shimmer 1.8s linear infinite; }
+        @keyframes shimmer { 0%{ background-position: 0 0;} 100%{ background-position: 200px 0;} }
+        .task-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: .9rem; margin: 8px 0; }
+        .task-frequency { background: rgba(124,58,237,.2); color: #e9d5ff; padding: 4px 10px; border-radius: 999px; font-weight: 700; letter-spacing: .2px; }
+
+        .calendar-mini { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-top: 12px; }
+        .calendar-day { height: 28px; display:flex; align-items:center; justify-content:center; border-radius: 7px; font-weight: 800; font-size: .8rem; }
+        .calendar-day.empty { background: transparent; }
+        .calendar-day.completed { background: #16a34a; color: #04210f; box-shadow: 0 2px 10px rgba(34,197,94,.35) inset, 0 1px 0 rgba(255,255,255,.06); }
+        .calendar-day.pending { background: rgba(255,255,255,.06); color: var(--muted); }
+
+        .task-progress-row { display:flex; align-items:center; gap:14px; padding:14px; border-radius:14px; background: rgba(255,255,255,.05); border:1px solid var(--border); margin-bottom:12px; }
+        .task-progress-name { min-width:180px; font-weight:900; }
+        .task-progress-bar { position:relative; flex:1; height:16px; border-radius:10px; background: rgba(255,255,255,.08); overflow:hidden; }
+        .task-progress-fill { height:100%; background: linear-gradient(90deg, var(--primary), var(--primary-2)); transition: width .6s ease; }
+        .task-progress-text { position:absolute; top:50%; right:10px; transform: translateY(-50%); font-size:.8rem; color:#e2e8f0; font-weight:800; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
+
+        @media (max-width: 768px) { .task-progress-name { min-width: 120px; } }
+    </style>
+</head>
+<body>
+    <div class="aurora" aria-hidden="true">
+        <span class="orb o1"></span>
+        <span class="orb o2"></span>
+        <span class="orb o3"></span>
+    </div>
+    <div class="container">
+        <header class="header">
+            <h1>Habit Tracker</h1>
+            <p>Track. Improve. Win the day.</p>
+        </header>
+        <div class="tabs">
+            <div class="nav-tabs">
+                <button class="nav-tab active" onclick="showTab(event, 'overview')">Overview</button>
+                <button class="nav-tab" onclick="showTab(event, 'tasks')">My Tasks</button>
+                <button class="nav-tab" onclick="showTab(event, 'comparison')">Compare</button>
+            </div>
+        </div>
+        <section id="overview" class="panel active">
+            <div class="overview-grid">
+                <div class="stat-card"><div class="stat-number">$total_tasks</div><div class="stat-label">Active Tasks</div></div>
+                <div class="stat-card"><div class="stat-number">$total_completions</div><div class="stat-label">Total Completions</div></div>
+                <div class="stat-card"><div class="stat-number">$this_month_completions</div><div class="stat-label">This Month</div></div>
+                <div class="stat-card"><div class="stat-number">$completion_rate%</div><div class="stat-label">Completion Rate</div></div>
+            </div>
+            <div class="motivational">$motivational_message</div>
+        </section>
+        <section id="tasks" class="panel">
+            <div class="tasks-grid">$task_cards</div>
+        </section>
+        <section id="comparison" class="panel">
+            <div class="progress-comparison">$comparison_bars</div>
+        </section>
+    </div>
+    <script>
+        function showTab(event, id) {
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            try { localStorage.setItem('habitTab', id); } catch(e){}
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                const saved = localStorage.getItem('habitTab');
+                if (saved && document.getElementById(saved)) {
+                    const map = {overview:'Overview', tasks:'My Tasks', comparison:'Compare'};
+                    const btn = Array.from(document.querySelectorAll('.nav-tab')).find(b => b.textContent === map[saved]);
+                    if (btn) btn.click();
+                }
+            } catch(e) {}
+        });
+    </script>
+</body>
+</html>
