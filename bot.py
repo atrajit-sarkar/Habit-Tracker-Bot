@@ -11,12 +11,12 @@ from db import StreakDB
 from utils import format_progress_message, generate_progress_html, generate_dashboard_html
 
 # Initialize bot with your token
-API_TOKEN = "7554119132:AAHo28qonTttOGoPGjQHuU3aBU5UBL_uURo"
+API_TOKEN = ""
 bot = telebot.TeleBot(API_TOKEN)
 
 # Restrict bot to a single chat (private chat or group). Set via env ALLOWED_CHAT_ID or hardcode.
 # When set (non-zero), the bot will IGNORE all other chats and will not send any messages.
-ALLOWED_CHAT_ID = int(os.environ.get("ALLOWED_CHAT_ID", "7990300718"))
+ALLOWED_CHAT_ID = int(os.environ.get("ALLOWED_CHAT_ID", ""))
 
 def is_allowed_chat(chat_id: int):
     try:
