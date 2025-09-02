@@ -8,7 +8,16 @@ import time
 import requests
 import urllib3
 from db import StreakDB
+from firestore_db import FirestoreDB
 from utils import format_progress_message, generate_progress_html, generate_dashboard_html
+
+# Hardcode Firestore credentials JSON path (adjust filename if you rename the key)
+try:
+    _CRED_PATH = os.path.join(os.path.dirname(__file__), 'habit-tracker-fb53f-firebase-adminsdk-fbsvc-7120b668d2.json')
+    if os.path.isfile(_CRED_PATH) and not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
+        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = _CRED_PATH
+except Exception:
+    pass
 
 # Initialize bot with your token
 API_TOKEN = ""
@@ -23,7 +32,22 @@ def is_allowed_chat(chat_id: int):
         return ALLOWED_CHAT_ID == 0 or int(chat_id) == ALLOWED_CHAT_ID
     except Exception:
         return False
-db = StreakDB(os.path.join(os.path.dirname(__file__), 'streaks.db'))
+# Choose database backend: Firestore if configured and available, else SQLite
+DB_BACKEND = os.environ.get("DB_BACKEND", "firestore").lower()  # 'firestore' | 'sqlite' | 'auto'
+SQLITE_PATH = os.path.join(os.path.dirname(__file__), 'streaks.db')
+db = None
+if DB_BACKEND in ("firestore", "auto"):
+    try:
+        db = FirestoreDB(sqlite_path=SQLITE_PATH, project_id=os.environ.get("GCP_PROJECT"))
+        print("🗄️ Using Firestore database backend")
+    except Exception as e:
+        if DB_BACKEND == "firestore":
+            raise
+        print(f"⚠️ Firestore unavailable, falling back to SQLite: {e}")
+        db = StreakDB(SQLITE_PATH)
+else:
+    db = StreakDB(SQLITE_PATH)
+    print("🗄️ Using SQLite database backend")
 
 # User contexts for multi-step commands
 user_contexts = {}
@@ -81,41 +105,78 @@ def check_scheduled_tasks():
     """Check for tasks that need polling reminders"""
     while True:
         try:
-            current_time = datetime.datetime.now().strftime('%H:%M')
-            
-            # Get all users with scheduled tasks for this time
-            with db._lock:
-                conn = db._conn()
-                cur = conn.cursor()
-                cur.execute(
-                    """
-                    SELECT DISTINCT user_id, id, name, schedule_time 
-                    FROM tasks 
-                    WHERE schedule_time = ? AND is_active = 1
-                    """,
-                    (current_time,)
-                )
-                scheduled_tasks = cur.fetchall()
-                conn.close()
+            now = datetime.datetime.now()
+            prev = now - datetime.timedelta(minutes=1)
+            # Build set of times to check: padded and unpadded hour variants
+            def time_variants(dt: datetime.datetime):
+                hhmm = dt.strftime('%H:%M')
+                h = dt.hour
+                mm = dt.strftime('%M')
+                variants = {hhmm}
+                if h < 10:
+                    variants.add(f"{h}:{mm}")
+                return variants
+            times_to_check = set()
+            times_to_check |= time_variants(now)
+            times_to_check |= time_variants(prev)
+
+            # Backend-agnostic lookup with deduplication
+            scheduled_tasks = []
+            seen_pairs = set()
+            if hasattr(db, 'get_tasks_scheduled_at'):
+                for t in times_to_check:
+                    try:
+                        for row in db.get_tasks_scheduled_at(t):
+                            key = (row[0], row[1])  # (user_id, task_id)
+                            if key not in seen_pairs:
+                                seen_pairs.add(key)
+                                scheduled_tasks.append(row)
+                    except Exception as _e:
+                        continue
+            else:
+                # Fallback path for SQLite backend using public API
+                with db._lock:
+                    conn = db._conn()
+                    cur = conn.cursor()
+                    cur.execute("SELECT DISTINCT user_id FROM tasks WHERE is_active=1")
+                    users = [r[0] for r in cur.fetchall()]
+                    for uid in users:
+                        for t in times_to_check:
+                            cur.execute(
+                                "SELECT id, name, schedule_time FROM tasks WHERE user_id=? AND is_active=1 AND schedule_time=?",
+                                (uid, t)
+                            )
+                            for tid, tname, stime in cur.fetchall():
+                                key = (uid, tid)
+                                if key not in seen_pairs:
+                                    seen_pairs.add(key)
+                                    scheduled_tasks.append((uid, tid, tname, stime))
+                    conn.close()
             
             # Send polls for scheduled tasks
             for user_id, task_id, task_name, schedule_time in scheduled_tasks:
                 # Check if we already sent a poll today for this task
                 today = datetime.date.today().strftime('%Y-%m-%d')
-                
                 # Check if already completed today
-                with db._lock:
-                    conn = db._conn()
-                    cur = conn.cursor()
-                    cur.execute(
-                        "SELECT COUNT(*) FROM streaks WHERE user_id=? AND date=? AND task_id=?",
-                        (user_id, today, task_id)
-                    )
-                    already_completed = cur.fetchone()[0] > 0
-                    conn.close()
+                if hasattr(db, 'is_completed_on_date'):
+                    already_completed = db.is_completed_on_date(user_id, task_id, today)
+                else:
+                    with db._lock:
+                        conn = db._conn()
+                        cur = conn.cursor()
+                        cur.execute(
+                            "SELECT COUNT(*) FROM streaks WHERE user_id=? AND date=? AND task_id=?",
+                            (user_id, today, task_id)
+                        )
+                        already_completed = cur.fetchone()[0] > 0
+                        conn.close()
                 
                 if not already_completed:
-                    send_scheduled_poll(user_id, task_id, task_name)
+                    if not is_allowed_chat(user_id):
+                        # Skip but log lightly for diagnostics
+                        print(f"Scheduler: skip user {user_id} not allowed for task {task_id}")
+                    else:
+                        send_scheduled_poll(user_id, task_id, task_name)
             
             # Sleep for 60 seconds before checking again
             time.sleep(60)
@@ -525,7 +586,8 @@ def handle_context_messages(message):
                 hours = int(time_parts[0])
                 minutes = int(time_parts[1])
                 if 0 <= hours <= 23 and 0 <= minutes <= 59:
-                    context["schedule_time"] = schedule_time
+                    # Normalize to HH:MM with leading zeros
+                    context["schedule_time"] = f"{hours:02d}:{minutes:02d}"
                     create_task_final(message, context)
                     return
             

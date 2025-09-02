@@ -1,1 +1,2 @@
 pyTelegramBotAPI==4.13.0
+google-cloud-firestore>=2.16.0
