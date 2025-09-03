@@ -55,6 +55,10 @@ user_contexts = {}
 # Store poll contexts for tracking poll responses
 poll_contexts = {}
 
+# Track sent reminders to avoid duplicate notifications across minute boundaries
+# Keyed by (user_id, task_id, date_str, schedule_time)
+sent_reminders = set()
+
 def create_main_menu():
     """Create main menu keyboard"""
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
@@ -106,6 +110,10 @@ def check_scheduled_tasks():
     while True:
         try:
             now = datetime.datetime.now()
+            # Prune sent reminders from previous days
+            today_str = datetime.date.today().strftime('%Y-%m-%d')
+            global sent_reminders
+            sent_reminders = {k for k in sent_reminders if k[2] == today_str}
             prev = now - datetime.timedelta(minutes=1)
             # Build set of times to check: padded and unpadded hour variants
             def time_variants(dt: datetime.datetime):
@@ -156,7 +164,11 @@ def check_scheduled_tasks():
             # Send polls for scheduled tasks
             for user_id, task_id, task_name, schedule_time in scheduled_tasks:
                 # Check if we already sent a poll today for this task
-                today = datetime.date.today().strftime('%Y-%m-%d')
+                today = today_str
+                # Skip if we already sent reminder for this user/task/time today
+                key_sent = (user_id, task_id, today, schedule_time)
+                if key_sent in sent_reminders:
+                    continue
                 # Check if already completed today
                 if hasattr(db, 'is_completed_on_date'):
                     already_completed = db.is_completed_on_date(user_id, task_id, today)
@@ -177,6 +189,8 @@ def check_scheduled_tasks():
                         print(f"Scheduler: skip user {user_id} not allowed for task {task_id}")
                     else:
                         send_scheduled_poll(user_id, task_id, task_name)
+                        # Mark as sent to avoid duplicates in the next minute
+                        sent_reminders.add(key_sent)
             
             # Sleep for 60 seconds before checking again
             time.sleep(60)
