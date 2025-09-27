@@ -13,7 +13,7 @@ from utils import format_progress_message, generate_progress_html, generate_dash
 
 # Hardcode Firestore credentials JSON path (adjust filename if you rename the key)
 try:
-    _CRED_PATH = os.path.join(os.path.dirname(__file__), 'habit-tracker-fb53f-firebase-adminsdk-fbsvc-7120b668d2.json')
+    _CRED_PATH = os.path.join(os.path.dirname(__file__), 'service.json')
     if os.path.isfile(_CRED_PATH) and not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
         os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = _CRED_PATH
 except Exception:
