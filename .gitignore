@@ -2,3 +2,4 @@ __pycache__/
 streaks.db
 .vscode/
 habit-tracker-fb53f-firebase-adminsdk-fbsvc-7120b668d2.json
+*.json
