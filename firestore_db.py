@@ -28,10 +28,22 @@ class FirestoreDB:
         if firestore is None:
             raise RuntimeError("google-cloud-firestore is not installed. Install it to use FirestoreDB.")
 
+        # Sanitize project id: if placeholder or empty, let library derive from credentials JSON
+        if project_id and project_id.lower() in {"your-gcp-project-id", "<your-gcp-project-id>"}:
+            project_id = None
+
         # Initialize client (uses GOOGLE_APPLICATION_CREDENTIALS by default)
-        self.client = firestore.Client(project=project_id)  # type: ignore
+        try:
+            self.client = firestore.Client(project=project_id)  # type: ignore
+        except Exception as e:
+            # Re-raise with clearer guidance
+            raise RuntimeError(
+                "Failed to initialize Firestore client. Ensure GOOGLE_APPLICATION_CREDENTIALS points to a valid service account JSON and the Firestore API is enabled. Original error: " + str(e)
+            ) from e
         self._lock = threading.Lock()
         self.sqlite_path = sqlite_path
+        # Track whether collection group query is disabled after first failure to avoid log spam
+        self._cg_query_disabled = False
 
         # One-time migration from SQLite if Firestore is empty
         try:
@@ -382,38 +394,42 @@ class FirestoreDB:
           Falls back gracefully if collection group queries are unavailable.
         """
         results: List[Tuple[int, int, str, str]] = []
-        try:
-            # Prefer collection group query (fast, single round trip)
-            cg = self.client.collection_group('tasks') \
-                .where(filter=FieldFilter('schedule_time', '==', time_str)) \
-                .where(filter=FieldFilter('is_active', '==', 1))
-            for doc in cg.stream():
-                data = doc.to_dict() or {}
-                # Ensure required fields present
-                if not data.get('user_id') or data.get('schedule_time') != time_str:
-                    continue
-                results.append((int(data.get('user_id')), int(data.get('id')), data.get('name'), data.get('schedule_time')))
-            return results
-        except Exception as e:
-            print(f"⚠️ Collection group query failed ({e}); falling back to per-user scan.")
-            # Fallback: iterate user documents (could be slower with many users)
+        use_cg = not getattr(self, '_cg_query_disabled', False)
+        if use_cg:
             try:
-                for user_doc in self.client.collection('users').list_documents():
-                    try:
-                        user_id = int(user_doc.id)
-                    except ValueError:
+                # Prefer collection group query (fast, single round trip)
+                cg = self.client.collection_group('tasks') \
+                    .where(filter=FieldFilter('schedule_time', '==', time_str)) \
+                    .where(filter=FieldFilter('is_active', '==', 1))
+                for doc in cg.stream():
+                    data = doc.to_dict() or {}
+                    if not data.get('user_id') or data.get('schedule_time') != time_str:
                         continue
-                    try:
-                        q = user_doc.collection('tasks') \
-                            .where(filter=FieldFilter('is_active', '==', 1)) \
-                            .where(filter=FieldFilter('schedule_time', '==', time_str))
-                        for tdoc in q.stream():
-                            t = tdoc.to_dict() or {}
-                            results.append((user_id, int(t.get('id')), t.get('name'), t.get('schedule_time')))
-                    except Exception:
-                        continue
-            except Exception:
-                pass
+                    results.append((int(data.get('user_id')), int(data.get('id')), data.get('name'), data.get('schedule_time')))
+                return results
+            except Exception as e:
+                # Only log once then disable further attempts to avoid spam
+                if not self._cg_query_disabled:
+                    print(f"⚠️ Collection group query failed once ({e}); disabling CG queries and falling back to per-user scan.")
+                self._cg_query_disabled = True
+        # Fallback: iterate user documents (could be slower with many users)
+        try:
+            for user_doc in self.client.collection('users').list_documents():
+                try:
+                    user_id = int(user_doc.id)
+                except ValueError:
+                    continue
+                try:
+                    q = user_doc.collection('tasks') \
+                        .where(filter=FieldFilter('is_active', '==', 1)) \
+                        .where(filter=FieldFilter('schedule_time', '==', time_str))
+                    for tdoc in q.stream():
+                        t = tdoc.to_dict() or {}
+                        results.append((user_id, int(t.get('id')), t.get('name'), t.get('schedule_time')))
+                except Exception:
+                    continue
+        except Exception:
+            pass
         return results
 
     def is_completed_on_date(self, user_id: int, task_id: int, date_iso: str) -> bool:
