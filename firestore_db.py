@@ -374,22 +374,46 @@ class FirestoreDB:
 
     # --- Helpers used by bot scheduler (replacing raw SQL) ---
     def get_tasks_scheduled_at(self, time_str: str) -> List[Tuple[int, int, str, str]]:
-        """Return list of (user_id, task_id, task_name, schedule_time) that are active and match time_str."""
+        """Return list of (user_id, task_id, task_name, schedule_time) that are active and match time_str.
+
+        Implementation detail:
+          Uses a collection group query over all 'tasks' subcollections so we don't
+          need a hard‑coded user list. Each task document stores user_id already.
+          Falls back gracefully if collection group queries are unavailable.
+        """
         results: List[Tuple[int, int, str, str]] = []
-        
-        # Since user documents might not exist (only subcollections), we need to use a different approach
-        # For now, we'll check known users. In production, you'd want to maintain a user registry.
-        known_user_ids = [7990300718]  # Add other user IDs as needed
-        
-        for user_id in known_user_ids:
+        try:
+            # Prefer collection group query (fast, single round trip)
+            cg = self.client.collection_group('tasks') \
+                .where(filter=FieldFilter('schedule_time', '==', time_str)) \
+                .where(filter=FieldFilter('is_active', '==', 1))
+            for doc in cg.stream():
+                data = doc.to_dict() or {}
+                # Ensure required fields present
+                if not data.get('user_id') or data.get('schedule_time') != time_str:
+                    continue
+                results.append((int(data.get('user_id')), int(data.get('id')), data.get('name'), data.get('schedule_time')))
+            return results
+        except Exception as e:
+            print(f"⚠️ Collection group query failed ({e}); falling back to per-user scan.")
+            # Fallback: iterate user documents (could be slower with many users)
             try:
-                tasks_col = self._tasks_col(user_id)
-                for tdoc in tasks_col.where(filter=FieldFilter("is_active", "==", 1)).where(filter=FieldFilter("schedule_time", "==", time_str)).stream():
-                    t = tdoc.to_dict()
-                    results.append((user_id, int(t.get("id")), t.get("name"), t.get("schedule_time")))
+                for user_doc in self.client.collection('users').list_documents():
+                    try:
+                        user_id = int(user_doc.id)
+                    except ValueError:
+                        continue
+                    try:
+                        q = user_doc.collection('tasks') \
+                            .where(filter=FieldFilter('is_active', '==', 1)) \
+                            .where(filter=FieldFilter('schedule_time', '==', time_str))
+                        for tdoc in q.stream():
+                            t = tdoc.to_dict() or {}
+                            results.append((user_id, int(t.get('id')), t.get('name'), t.get('schedule_time')))
+                    except Exception:
+                        continue
             except Exception:
-                continue
-        
+                pass
         return results
 
     def is_completed_on_date(self, user_id: int, task_id: int, date_iso: str) -> bool:

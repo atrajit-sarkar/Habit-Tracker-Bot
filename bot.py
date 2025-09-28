@@ -7,6 +7,13 @@ import threading
 import time
 import requests
 import urllib3
+
+# Load environment variables from .env if present
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()
+except Exception:
+    pass
 from db import StreakDB
 from firestore_db import FirestoreDB
 from utils import format_progress_message, generate_progress_html, generate_dashboard_html
@@ -19,13 +26,21 @@ try:
 except Exception:
     pass
 
-# Initialize bot with your token
-API_TOKEN = ""
-bot = telebot.TeleBot(API_TOKEN)
+# Initialize bot with your token (fetched from environment)
+API_TOKEN = os.environ.get("API_TOKEN", "")
+if not API_TOKEN:
+    print("⚠️ API_TOKEN not set. Set it in environment or .env file.")
+bot = telebot.TeleBot(API_TOKEN) if API_TOKEN else telebot.TeleBot('TEST_PLACEHOLDER')
 
 # Restrict bot to a single chat (private chat or group). Set via env ALLOWED_CHAT_ID or hardcode.
 # When set (non-zero), the bot will IGNORE all other chats and will not send any messages.
-ALLOWED_CHAT_ID = int(os.environ.get("ALLOWED_CHAT_ID", ""))
+def _safe_int(val: str | None, default: int = 0) -> int:
+    try:
+        return int(val) if val not in (None, "") else default
+    except Exception:
+        return default
+
+ALLOWED_CHAT_ID = _safe_int(os.environ.get("ALLOWED_CHAT_ID"), 0)
 
 def is_allowed_chat(chat_id: int):
     try:
@@ -962,6 +977,8 @@ if __name__ == "__main__":
         print(f"🔒 Restricted to chat ID: {ALLOWED_CHAT_ID}")
     else:
         print("ℹ️ No chat restriction set (ALLOWED_CHAT_ID=0). Responding to all chats.")
+    if not API_TOKEN or API_TOKEN == 'TEST_PLACEHOLDER':
+        print("❌ No valid API token configured. Set API_TOKEN in environment/.env before running in production.")
     
     # Start the scheduled task checker
     start_scheduler()
